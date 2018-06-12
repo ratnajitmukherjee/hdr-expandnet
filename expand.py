@@ -1,3 +1,51 @@
+"""
+***********************************************************************************************************************
+BSD 3-Clause Clear License
+Redistribution and use in source and binary forms, with or without
+modification, are permitted (subject to the limitations in the disclaimer
+below) provided that the following conditions are met:
+
+     * Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer.
+
+     * Redistributions in binary form must reproduce the above copyright
+     notice, this list of conditions and the following disclaimer in the
+     documentation and/or other materials provided with the distribution.
+
+     * Neither the name of the copyright holder nor the names of its
+     contributors may be used to endorse or promote products derived from this
+     software without specific prior written permission.
+
+NO EXPRESS OR IMPLIED LICENSES TO ANY PARTY'S PATENT RIGHTS ARE GRANTED BY
+THIS LICENSE. THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER
+IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+Copyright (c) 2017-Demetris Marnerides, All rights reserved.
+Modification by Ratnajit Mukherjee, 2018 with author's permission
+***********************************************************************************************************************
+"""
+
+"""
+************************************************************************************************************************
+NOTE by Ratnajit Mukherjee
+
+This main file expand.py has undergone minor modifications with the permission of the author. I claim no rights to the 
+original code and please cite the author's work if you happen to use the code.
+
+The rest of the project contains some files which are written by to process the predicted HDRs as EXRs (useful sometimes
+to integrate into other projects. Also involves some clipping and scaling solely for the purpose of the my own work and 
+does not effect the original code in any way.
+************************************************************************************************************************
+"""
+
 import os
 from os import path
 import argparse
@@ -20,44 +68,52 @@ def process_path(directory, create=False):
             pass
     return directory
 
+
 def split_path(directory):
     directory = process_path(directory)
     name, ext = path.splitext(path.basename(directory))
     return path.dirname(directory), name, ext
 
+
 # From torchnet
 def compose(transforms):
-    "Composes list of transforms (each accept and return one item)"
+    """Composes list of transforms (each accept and return one item)"""
     assert isinstance(transforms, list)
     for transform in transforms:
         assert callable(transform), "list of functions expected"
 
     def composition(obj):
-        "Composite function"
+        """Composite function"""
         for transform in transforms:
             obj = transform(obj)
         return obj
     return composition
 
+
 def replace_specials_(x, val=0):
     x[np.isinf(x).sum() | np.isnan(x).sum()] = val
     return x
 
+
 def map_range(x, low=0, high=1):
     return np.interp(x, [x.min(), x.max()], [low, high]).astype(x.dtype)
     
+
 def str2bool(x):
     if x is None or x.lower() in ['no', 'false', 'f', '0']:
         return False
     else:
         return True
 
+
 def cv2torch(np_img):
     rgb = np_img[:, :, (2, 1, 0)]
     return torch.from_numpy(rgb.swapaxes(1, 2).swapaxes(0, 1))
 
+
 def torch2cv(t_img):
     return t_img.numpy().swapaxes(0, 2).swapaxes(0, 1)[:, :, (2, 1, 0)]
+
 
 def resize(x):
     if opt.resize:
@@ -65,10 +121,12 @@ def resize(x):
     else:
         return x
 
+
 # Model definition
 class ExpandNet(nn.Module):
     def __init__(self):
         super(ExpandNet, self).__init__()
+
         def layer(nIn, nOut, k, s, p, d=1):
             return nn.Sequential(nn.Conv2d(nIn, nOut, k, s, p, d), 
                                  nn.SELU(inplace=True))
@@ -101,6 +159,7 @@ class ExpandNet(nn.Module):
             nn.Conv2d(64, 3, 1, 1, 0),
             nn.Sigmoid()
         )
+
     # This uses stitching is for low memory usage
     def forward(self, t_input):
         vrs = torch.__version__.split('.')
@@ -132,7 +191,7 @@ class ExpandNet(nn.Module):
             v_input = Variable(t_input)
         else:
             v_input = Variable(t_input, volatile=True)
-        v_input = torch.nn.functional.pad(v_input,(skip,skip,skip,skip))
+        v_input = torch.nn.functional.pad(v_input, (skip, skip, skip, skip))
         height, width = v_input.size(-2), v_input.size(-1)
         num_h = int(np.ceil((result.size(-2)-skip)/(opt.patch_size-overlap)))
         num_w = int(np.ceil((result.size(-1)-skip)/(opt.patch_size-overlap)))
@@ -142,7 +201,7 @@ class ExpandNet(nn.Module):
                 w_start = w_index*(opt.patch_size-overlap)
                 h_end = min(h_start + opt.patch_size, height)
                 w_end = min(w_start + opt.patch_size, width)
-                v_input_slice = v_input[:,:,h_start:h_end, w_start:w_end]
+                v_input_slice = v_input[:, :, h_start:h_end, w_start:w_end]
                 loc = self.local_net(v_input_slice)
                 mid = self.mid_net(v_input_slice)
                 exp_glob = glob.expand(1, 64, h_end-h_start, w_end-w_start)
@@ -159,7 +218,9 @@ class ExpandNet(nn.Module):
                 del fuse, loc, mid, res
         return result[0]
 
-## Parameters
+"""
+Parsing of input parameters
+"""
 parser = argparse.ArgumentParser()
 arg = parser.add_argument
 arg('ldr', nargs='+', type=process_path, help='Ldr image(s)')
@@ -215,6 +276,7 @@ def tone_map(img, tmo_name):
                                       sigma_space=8, sigma_color=0.4)
     return tmo.process(img)
 
+
 def create_name(inp, tag, ext, out, extra_tag):
     root, name, _ = split_path(inp)
     if extra_tag is not None:
@@ -222,6 +284,9 @@ def create_name(inp, tag, ext, out, extra_tag):
     if out is not None:
         root = out
     return path.join(root, '{0}_{1}.{2}'.format(name, tag, ext))
+
+
+# Option to create videos
 if opt.video:
     if opt.tone_map is None:
         opt.tone_map = 'reinhard'
@@ -235,7 +300,7 @@ if opt.video:
     lum_values = np.ndarray((2,int(n_frames)), dtype='float32')
     predictions = []
     lum_percs = []
-    while(cap_in.isOpened()):
+    while cap_in.isOpened():
         perc = cap_in.get(cv2.CAP_PROP_POS_FRAMES)*100/n_frames
         print('\rConverting video: {0:.2f}%'.format(perc), end='')
         ret, loaded = cap_in.read()
@@ -283,11 +348,26 @@ else:
         if opt.use_gpu:
             net.cuda()
             t_input = t_input.cuda()
-        prediction = map_range(torch2cv(net(t_input).cpu()), 0, 1)
+
+        """
+        Changing this portion as a 0-1 range creates multiple issues during compression and color space changes
+        as (divide by zero) condition pops up
+        Change by Ratnajit Mukherjee, 2018 
+        """
+        prediction = map_range(torch2cv(net(t_input).cpu()), 1e-6, 1)
 
         out_name = create_name(ldr_file, 'prediction', 'hdr', opt.out,
                                opt.tag)
         cv2.imwrite(out_name, prediction)
+
+        """
+        Adding a simple print statement for monitoring purposes (easier while processing very large amounts of data
+        Maybe will later add fancy progress bar
+        Change by Ratnajit Mukherjee, 2018
+        """
+        path, basename = os.path.split(out_name)
+        print("\n File {0} written to disk".format(basename))
+
         if opt.tone_map is not None:
             tmo_img = tone_map(prediction, opt.tone_map)
             out_name = create_name(ldr_file, 
